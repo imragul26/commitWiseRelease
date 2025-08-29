@@ -13,11 +13,61 @@ jobs:
     name: 🛠 Run Release Drafter
     runs-on: ubuntu-latest
     steps:
-      - name: 🧰 Run release-drafter with commit extraction
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 📝 Extract commit messages from all PRs
+        id: extract-commits
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Get all merged PRs
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 50
+            });
+            
+            const commitData = {};
+            
+            for (const pr of pulls) {
+              if (pr.merged_at) {
+                try {
+                  const { data: commits } = await github.rest.pulls.listCommits({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number
+                  });
+                  
+                  // Format commit messages
+                  const commitMessages = commits.map(commit => 
+                    `  • ${commit.commit.message.split('\n')[0]}` // First line only
+                  ).join('\n');
+                  
+                  commitData[pr.number] = commitMessages || '  • No commit messages available';
+                } catch (error) {
+                  commitData[pr.number] = '  • Error fetching commit messages';
+                }
+              }
+            }
+            
+            // Set output as JSON string
+            core.setOutput('commit-data', JSON.stringify(commitData));
+            console.log('Extracted commit data for PRs:', Object.keys(commitData).length);
+            
+      - name: 🧰 Run release-drafter with commit data
         uses: release-drafter/release-drafter@v6
         with:
           version: ${{ github.event.inputs.version }}
-          # ADD THIS CONFIG FILE PATH:
-          config-name: release-drafter.yml
+          # Use the updated config file
+          config-name: release-drafter-commits.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the commit data
+          COMMIT_DATA: ${{ steps.extract-commits.outputs.result }}

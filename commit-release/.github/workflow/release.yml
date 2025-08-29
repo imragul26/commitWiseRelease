@@ -1,142 +1,55 @@
-name: Release
+name: Create branch per commit
 
 on:
   push:
     branches:
-      - main  # your default branch
+      - main  # or your source branch
 
 jobs:
-  release:
+  create-branch-per-commit:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Install GitHub CLI
-        run: |
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-          sudo apt-add-repository https://cli.github.com/packages
-          sudo apt update
-          sudo apt install gh -y
-
-      - name: Authenticate GitHub CLI
-        run: gh auth login --with-token < ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get latest tag
-        id: get_latest_tag
-        run: |
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          echo "latest_tag=$TAG" >> $GITHUB_OUTPUT
-
-      - name: Bump patch version
-        id: bump_version
-        run: |
-          VERSION=${{ steps.get_latest_tag.outputs.latest_tag }}
-          VERSION_NUMBER=${VERSION#v}
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NUMBER"
-          PATCH=$((PATCH + 1))
-          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Fetch merged PRs since last tag
-        id: fetch_prs
-        run: |
-          # Get commit date of last tag
-          LAST_TAG_DATE=$(git log -1 --format=%cI ${{ steps.get_latest_tag.outputs.latest_tag }})
-          echo "Last tag date: $LAST_TAG_DATE"
-
-          # Fetch merged PRs since last tag date
-          PRS_JSON=$(gh pr list --state merged --search "merged:>$LAST_TAG_DATE" --json number,title)
-          echo "$PRS_JSON" > prs.json
-          echo "prs_json<<EOF" >> $GITHUB_OUTPUT
-          cat prs.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Generate release notes with commit messages per PR
-        id: generate_notes
-        run: |
-          PRS=$(cat prs.json | jq -c '.[]')
-
-          echo "## Release Notes" > release_notes.md
-          echo "" >> release_notes.md
-
-          # Prepare categories
-          echo "### 🚀 Features" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### 🐛 Bug Fixes" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### 📚 Documentation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### 🔧 Chores" >> release_notes.md
-          echo "" >> release_notes.md
-
-          # Helper function to append commits under category
-          append_commits() {
-            CATEGORY=$1
-            EMOJI=$2
-            echo "### $EMOJI $CATEGORY" >> release_notes.md
-            echo "" >> release_notes.md
-            FOUND=0
-
-            for row in $(jq -c '.[]' prs.json); do
-              PR_TITLE=$(echo "$row" | jq -r '.title')
-              PR_NUMBER=$(echo "$row" | jq -r '.number')
-
-              # Check if PR title starts with category prefix
-              case "$CATEGORY" in
-                "Features") PREFIX="feat:" ;;
-                "Bug Fixes") PREFIX="fix:" ;;
-                "Documentation") PREFIX="docs:" ;;
-                "Chores") PREFIX="chore:" ;;
-                *) PREFIX="" ;;
-              esac
-
-              if echo "$PR_TITLE" | grep -iq "^$PREFIX"; then
-                FOUND=1
-                echo "- PR #$PR_NUMBER: $PR_TITLE" >> release_notes.md
-
-                # Get commits in PR
-                COMMITS=$(gh pr view $PR_NUMBER --json commits --jq '.commits[].commit.message')
-                while IFS= read -r commit_msg; do
-                  echo "  - $commit_msg" >> release_notes.md
-                done <<< "$COMMITS"
-
-                echo "" >> release_notes.md
-              fi
-            done
-
-            if [ $FOUND -eq 0 ]; then
-              echo "_No $CATEGORY in this release._" >> release_notes.md
-              echo "" >> release_notes.md
-            fi
-          }
-
-          append_commits "Features" "🚀"
-          append_commits "Bug Fixes" "🐛"
-          append_commits "Documentation" "📚"
-          append_commits "Chores" "🔧"
-
-          cat release_notes.md
-
-          echo "release_notes<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.bump_version.outputs.new_version }}
-          name: Release ${{ steps.bump_version.outputs.new_version }}
-          body: ${{ steps.generate_notes.outputs.release_notes }}
+          fetch-depth: 0  # fetch full history to access commits
+
+      - name: Get list of new commits in this push
+        id: commits
+        run: |
+          # Get commits in this push (between previous and current)
+          # GITHUB_SHA is the latest commit
+          # GITHUB_REF is the ref (refs/heads/main)
+          PREV_SHA=$(git rev-parse HEAD^)
+          echo "Previous SHA: $PREV_SHA"
+          echo "Current SHA: $GITHUB_SHA"
+
+          # List commits between PREV_SHA and GITHUB_SHA (inclusive)
+          COMMITS=$(git rev-list --reverse $PREV_SHA..$GITHUB_SHA)
+          echo "Commits in push:"
+          echo "$COMMITS"
+
+          echo "::set-output name=commit_list::$COMMITS"
+
+      - name: Create branches and push commits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push new tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.bump_version.outputs.new_version }}
-          git push origin ${{ steps.bump_version.outputs.new_version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          for commit in ${{ steps.commits.outputs.commit_list }}; do
+            # Create a branch name based on commit SHA
+            branch_name="commit-${commit}"
+
+            echo "Creating branch $branch_name for commit $commit"
+
+            # Create branch at that commit
+            git branch -f $branch_name $commit
+
+            # Push branch to origin
+            git push origin $branch_name --force
+
+            # Optionally create PR via GitHub CLI
+            # gh pr create --title "Commit $commit" --body "Auto PR for commit $commit" --base main --head $branch_name --repo $GITHUB_REPOSITORY --draft
+          done

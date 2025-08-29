@@ -24,19 +24,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Get all merged PRs
-            const { data: pulls } = await github.rest.pulls.list({
+            // Get all merged PRs since last tag
+            const { data: recentPulls } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'closed',
               sort: 'updated',
               direction: 'desc',
-              per_page: 50
+              per_page: 20
             });
             
             const commitData = {};
             
-            for (const pr of pulls) {
+            for (const pr of recentPulls) {
               if (pr.merged_at) {
                 try {
                   const { data: commits } = await github.rest.pulls.listCommits({
@@ -45,13 +45,17 @@ jobs:
                     pull_number: pr.number
                   });
                   
-                  // Format commit messages
+                  // Extract commit messages with their SHA
                   const commitMessages = commits.map(commit => 
-                    `  • ${commit.commit.message.split('\n')[0]}` // First line only
+                    `  • ${commit.sha.substring(0, 7)}: ${commit.commit.message.split('\n')[0]}`
                   ).join('\n');
                   
                   commitData[pr.number] = commitMessages || '  • No commit messages available';
+                  
+                  console.log(`PR #${pr.number}: ${commits.length} commits extracted`);
+                  
                 } catch (error) {
+                  console.error(`Error getting commits for PR #${pr.number}:`, error);
                   commitData[pr.number] = '  • Error fetching commit messages';
                 }
               }
@@ -59,15 +63,13 @@ jobs:
             
             // Set output as JSON string
             core.setOutput('commit-data', JSON.stringify(commitData));
-            console.log('Extracted commit data for PRs:', Object.keys(commitData).length);
+            console.log('Total PRs processed:', Object.keys(commitData).length);
             
       - name: 🧰 Run release-drafter with commit data
         uses: release-drafter/release-drafter@v6
         with:
           version: ${{ github.event.inputs.version }}
-          # Use the updated config file
           config-name: release-drafter-commits.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pass the commit data
           COMMIT_DATA: ${{ steps.extract-commits.outputs.result }}

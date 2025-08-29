@@ -15,27 +15,17 @@ categories:
     collapse-after: 2
   - title: "📋 Other Changes"
     labels: []
-    # fallback bucket when PRs don't match above categories
  
-label-extractors:
-  module:
-    labels:
-      - origination
-      - maintenance
-      - testation
- 
+# CHANGE THIS TEMPLATE TO INCLUDE COMMIT MESSAGES:
 change-template: |
   - $TITLE$IS_MODULE – #$NUMBER
+    ${{formatCommitMessages(commits)}}
  
-# Template if there are no matching PRs
 no-changes-template: "No significant changes."
  
-# Define custom template variables
 template-variables:
-  # If $MODULE is defined, prefix it in brackets
   IS_MODULE: $IS_MODULE_TEMPLATE
  
-# Custom rendering logic for module label (optional)
 replacers:
   - search: '\$IS_MODULE_TEMPLATE'
     replace: >-
@@ -45,3 +35,16 @@ replacers:
         contains(labels, 'testation') && ' (`testation`)' ||
         ''
       }}
+
+# ADD THIS CUSTOM TEMPLATE FUNCTION:
+template: |
+  {{#each releases}}
+    {{#each commits}}
+      {{#if @first}}
+        ### Commits for PR #{{number}}
+        {{#each commits}}
+          - {{subject}}
+        {{/each}}
+      {{/if}}
+    {{/each}}
+  {{/each}}

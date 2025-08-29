@@ -18,7 +18,7 @@ categories:
  
 # Updated template to include commit messages
 change-template: |
-  - $TITLE$IS_MODULE – #$NUMBER
+  - **$TITLE**$IS_MODULE – #$NUMBER
     ${{getCommitMessages(number)}}
  
 no-changes-template: "No significant changes."
@@ -35,7 +35,7 @@ replacers:
         contains(labels, 'testation') && ' (`testation`)' ||
         ''
       }}
-
+  
   # Add this replacer to handle commit messages
   - search: '\${{getCommitMessages\(number\)}}'
     replace: >-
@@ -43,8 +43,10 @@ replacers:
         (function() {
           try {
             const commitData = JSON.parse(process.env.COMMIT_DATA || '{}');
-            return commitData[number] || '  • No commit messages available';
+            const messages = commitData[number] || '  • No commit messages available';
+            return messages;
           } catch (e) {
+            console.error('Error parsing commit data:', e.message);
             return '  • Error loading commit messages';
           }
         })()

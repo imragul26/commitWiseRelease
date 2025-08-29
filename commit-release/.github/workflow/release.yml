@@ -18,14 +18,26 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 📝 Extract commit messages from all PRs
-        id: extract-commits
+      - name: 📝 Generate release notes with commits
+        id: generate-notes
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Get all merged PRs since last tag
-            const { data: recentPulls } = await github.rest.pulls.list({
+            // Get the latest release to find what's new
+            let sinceTag = '1.0.0'; // fallback
+            try {
+              const { data: latestRelease } = await github.rest.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              sinceTag = latestRelease.tag_name;
+            } catch (error) {
+              console.log('No previous release found, using fallback');
+            }
+            
+            // Get all merged PRs since last release
+            const { data: pulls } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'closed',
@@ -34,42 +46,44 @@ jobs:
               per_page: 20
             });
             
-            const commitData = {};
+            let releaseNotes = "## What's Changed\n\n";
             
-            for (const pr of recentPulls) {
+            for (const pr of pulls) {
               if (pr.merged_at) {
-                try {
-                  const { data: commits } = await github.rest.pulls.listCommits({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pr.number
+                // Get commits for this PR
+                const { data: commits } = await github.rest.pulls.listCommits({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number
+                });
+                
+                // Add PR title
+                releaseNotes += `* **${pr.title}** by @${pr.user.login} in #${pr.number}\n`;
+                
+                // Add commit messages
+                if (commits.length > 0) {
+                  releaseNotes += "  \n";
+                  commits.forEach(commit => {
+                    releaseNotes += `  • ${commit.commit.message.split('\n')[0]}\n`;
                   });
-                  
-                  // Extract commit messages with their SHA
-                  const commitMessages = commits.map(commit => 
-                    `  • ${commit.sha.substring(0, 7)}: ${commit.commit.message.split('\n')[0]}`
-                  ).join('\n');
-                  
-                  commitData[pr.number] = commitMessages || '  • No commit messages available';
-                  
-                  console.log(`PR #${pr.number}: ${commits.length} commits extracted`);
-                  
-                } catch (error) {
-                  console.error(`Error getting commits for PR #${pr.number}:`, error);
-                  commitData[pr.number] = '  • Error fetching commit messages';
+                  releaseNotes += "  \n";
                 }
               }
             }
             
-            // Set output as JSON string
-            core.setOutput('commit-data', JSON.stringify(commitData));
-            console.log('Total PRs processed:', Object.keys(commitData).length);
+            // Add full changelog link
+            releaseNotes += `\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${sinceTag}...${github.event.inputs.version}\n`;
             
-      - name: 🧰 Run release-drafter with commit data
-        uses: release-drafter/release-drafter@v6
+            core.setOutput('release-notes', releaseNotes);
+            console.log('Generated release notes:', releaseNotes);
+            
+      - name: 🚀 Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          version: ${{ github.event.inputs.version }}
-          config-name: release-drafter-commits.yml
+          tag_name: v${{ github.event.inputs.version }}
+          name: Release v${{ github.event.inputs.version }}
+          body: ${{ steps.generate-notes.outputs.release-notes }}
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMIT_DATA: ${{ steps.extract-commits.outputs.result }}

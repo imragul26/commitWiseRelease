@@ -1,4 +1,4 @@
-name: 📦 Simple Git Commit Release
+name: 📦 ULTIMATE Release Notes Generator
 
 on:
   workflow_dispatch:
@@ -17,26 +17,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 📝 Get all commits since last tag
+      - name: 🔍 Get commits using direct Git commands
         id: get-commits
         run: |
-          # Get the previous tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          # Get all commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           
-          if [ -z "$PREVIOUS_TAG" ]; then
-            # If no previous tag, get all commits
-            echo "No previous tag found, getting all commits"
-            COMMITS=$(git log --oneline --pretty=format:"- %h: %s (%an)" | head -20)
-            COMPARE_URL="https://github.com/${{ github.repository }}/releases/tag/v${{ github.event.inputs.version }}"
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tags found, getting all commits"
+            COMMITS=$(git log --oneline --pretty=format:"- %h: %s [%an]")
           else
-            # Get commits since last tag
-            echo "Getting commits since $PREVIOUS_TAG"
-            COMMITS=$(git log $PREVIOUS_TAG..HEAD --oneline --pretty=format:"- %h: %s (%an)")
-            COMPARE_URL="https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...v${{ github.event.inputs.version }}"
+            echo "Getting commits since last tag: $LAST_TAG"
+            COMMITS=$(git log $LAST_TAG..HEAD --oneline --pretty=format:"- %h: %s [%an]")
           fi
           
           # Create release notes
-          NOTES="# Release Notes\n\n## Commits\n\n$COMMITS\n\n**Full Changelog**: $COMPARE_URL"
+          NOTES="# Release Notes\n\n## Commits\n\n$COMMITS\n\n**Generated on**: $(date)"
           
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT

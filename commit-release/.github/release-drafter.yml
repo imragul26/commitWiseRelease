@@ -16,10 +16,10 @@ categories:
   - title: "📋 Other Changes"
     labels: []
  
-# CHANGE THIS TEMPLATE TO INCLUDE COMMIT MESSAGES:
+# Updated template to include commit messages
 change-template: |
   - $TITLE$IS_MODULE – #$NUMBER
-    ${{formatCommitMessages(commits)}}
+    ${{getCommitMessages(number)}}
  
 no-changes-template: "No significant changes."
  
@@ -36,15 +36,16 @@ replacers:
         ''
       }}
 
-# ADD THIS CUSTOM TEMPLATE FUNCTION:
-template: |
-  {{#each releases}}
-    {{#each commits}}
-      {{#if @first}}
-        ### Commits for PR #{{number}}
-        {{#each commits}}
-          - {{subject}}
-        {{/each}}
-      {{/if}}
-    {{/each}}
-  {{/each}}
+  # Add this replacer to handle commit messages
+  - search: '\${{getCommitMessages\(number\)}}'
+    replace: >-
+      ${{
+        (function() {
+          try {
+            const commitData = JSON.parse(process.env.COMMIT_DATA || '{}');
+            return commitData[number] || '  • No commit messages available';
+          } catch (e) {
+            return '  • Error loading commit messages';
+          }
+        })()
+      }}

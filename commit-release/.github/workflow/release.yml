@@ -1,4 +1,4 @@
-name: 📦 Generate Release with Commit Messages
+name: 📦 Simple Git Commit Release
 
 on:
   workflow_dispatch:
@@ -17,103 +17,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 📝 Generate release notes with PRs and commits
-        id: generate-notes
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const version = '${{ github.event.inputs.version }}';
-            
-            // Get the latest release to find previous tag
-            let previousTag = '1.0.0';
-            try {
-              const { data: releases } = await github.rest.repos.listReleases({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                per_page: 5
-              });
-              
-              if (releases && releases.length > 0) {
-                previousTag = releases[0].tag_name;
-              }
-            } catch (error) {
-              console.log('Using default previous tag');
-            }
-            
-            console.log('Previous tag:', previousTag);
-            
-            // Get all merged PRs
-            const { data: pulls } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'closed',
-              sort: 'updated',
-              direction: 'desc',
-              per_page: 50
-            });
-            
-            let releaseNotes = "## What's Changed\n\n";
-            const processedPRs = new Set();
-            
-            // Process each PR to get title and commits
-            for (const pr of pulls) {
-              if (pr.merged_at && !processedPRs.has(pr.number)) {
-                processedPRs.add(pr.number);
-                
-                try {
-                  // Get all commits for this PR
-                  const { data: commits } = await github.rest.pulls.listCommits({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: pr.number
-                  });
-                  
-                  // Add PR title with link
-                  releaseNotes += `* **${pr.title}** by @${pr.user.login} in [#${pr.number}](${pr.html_url})\n`;
-                  
-                  // Add all commit messages
-                  if (commits && commits.length > 0) {
-                    releaseNotes += "\n";
-                    commits.forEach(commit => {
-                      const message = commit.commit.message.split('\n')[0]; // First line only
-                      const shaShort = commit.sha.substring(0, 7);
-                      releaseNotes += `  • ${shaShort}: ${message}\n`;
-                    });
-                    releaseNotes += "\n";
-                  } else {
-                    releaseNotes += "  • No commit messages available\n\n";
-                  }
-                  
-                } catch (error) {
-                  console.log(`Error processing PR #${pr.number}:`, error.message);
-                  releaseNotes += `* **${pr.title}** by @${pr.user.login} in [#${pr.number}](${pr.html_url})\n`;
-                  releaseNotes += "  • Error fetching commit messages\n\n";
-                }
-              }
-            }
-            
-            if (processedPRs.size === 0) {
-              releaseNotes += "No pull requests merged since last release.\n\n";
-            }
-            
-            // Add full changelog link
-            releaseNotes += `\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${previousTag}...v${version}\n`;
-            
-            console.log('Generated release notes for', processedPRs.size, 'PRs');
-            core.setOutput('release-notes', releaseNotes);
-
-      - name: 📄 Display generated notes (for debugging)
+      - name: 📝 Get all commits since last tag
+        id: get-commits
         run: |
-          echo "Generated Release Notes:"
-          echo '${{ steps.generate-notes.outputs.release-notes }}'
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # If no previous tag, get all commits
+            echo "No previous tag found, getting all commits"
+            COMMITS=$(git log --oneline --pretty=format:"- %h: %s (%an)" | head -20)
+            COMPARE_URL="https://github.com/${{ github.repository }}/releases/tag/v${{ github.event.inputs.version }}"
+          else
+            # Get commits since last tag
+            echo "Getting commits since $PREVIOUS_TAG"
+            COMMITS=$(git log $PREVIOUS_TAG..HEAD --oneline --pretty=format:"- %h: %s (%an)")
+            COMPARE_URL="https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...v${{ github.event.inputs.version }}"
+          fi
+          
+          # Create release notes
+          NOTES="# Release Notes\n\n## Commits\n\n$COMMITS\n\n**Full Changelog**: $COMPARE_URL"
+          
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: 🚀 Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: Release v${{ github.event.inputs.version }}
-          body: ${{ steps.generate-notes.outputs.release-notes }}
+          body: ${{ steps.get-commits.outputs.notes }}
           draft: false
           prerelease: false
         env:

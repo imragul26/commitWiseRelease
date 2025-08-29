@@ -1,55 +1,37 @@
-name: Create branch per commit
+- name: Generate release notes with all commit messages per PR
+  id: generate_notes
+  run: |
+    # Get the latest tag
+    LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+    echo "Latest tag: $LATEST_TAG"
 
-on:
-  push:
-    branches:
-      - main  # or your source branch
+    # Get merged PRs since last tag (using GitHub CLI)
+    PRS_JSON=$(gh pr list --state merged --json number,title --search "merged:>$LATEST_TAG" --repo $GITHUB_REPOSITORY)
+    echo "$PRS_JSON" > prs.json
 
-jobs:
-  create-branch-per-commit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0  # fetch full history to access commits
+    echo "## What's Changed" > release_notes.md
+    echo "" >> release_notes.md
 
-      - name: Get list of new commits in this push
-        id: commits
-        run: |
-          # Get commits in this push (between previous and current)
-          # GITHUB_SHA is the latest commit
-          # GITHUB_REF is the ref (refs/heads/main)
-          PREV_SHA=$(git rev-parse HEAD^)
-          echo "Previous SHA: $PREV_SHA"
-          echo "Current SHA: $GITHUB_SHA"
+    # Loop through each PR
+    for row in $(jq -c '.[]' prs.json); do
+      PR_NUMBER=$(echo "$row" | jq -r '.number')
+      PR_TITLE=$(echo "$row" | jq -r '.title')
 
-          # List commits between PREV_SHA and GITHUB_SHA (inclusive)
-          COMMITS=$(git rev-list --reverse $PREV_SHA..$GITHUB_SHA)
-          echo "Commits in push:"
-          echo "$COMMITS"
+      echo "* $PR_TITLE (PR #$PR_NUMBER)" >> release_notes.md
 
-          echo "::set-output name=commit_list::$COMMITS"
+      # Get all commit messages in this PR
+      COMMITS=$(gh pr view $PR_NUMBER --json commits --repo $GITHUB_REPOSITORY --jq '.commits[].commit.message')
 
-      - name: Create branches and push commits
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      # Indent commit messages under PR title
+      while IFS= read -r commit_msg; do
+        echo "  - $commit_msg" >> release_notes.md
+      done <<< "$COMMITS"
 
-          for commit in ${{ steps.commits.outputs.commit_list }}; do
-            # Create a branch name based on commit SHA
-            branch_name="commit-${commit}"
+      echo "" >> release_notes.md
+    done
 
-            echo "Creating branch $branch_name for commit $commit"
+    cat release_notes.md
 
-            # Create branch at that commit
-            git branch -f $branch_name $commit
-
-            # Push branch to origin
-            git push origin $branch_name --force
-
-            # Optionally create PR via GitHub CLI
-            # gh pr create --title "Commit $commit" --body "Auto PR for commit $commit" --base main --head $branch_name --repo $GITHUB_REPOSITORY --draft
-          done
+    echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+    cat release_notes.md >> $GITHUB_OUTPUT
+    echo "EOF" >> $GITHUB_OUTPUT

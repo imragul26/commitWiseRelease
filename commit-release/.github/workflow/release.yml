@@ -13,10 +13,11 @@ jobs:
     name: 🛠 Run Release Drafter
     runs-on: ubuntu-latest
     steps:
-      - name: 🧰 Run release-drafter
+      - name: 🧰 Run release-drafter with commit extraction
         uses: release-drafter/release-drafter@v6
         with:
           version: ${{ github.event.inputs.version }}
+          # ADD THIS CONFIG FILE PATH:
+          config-name: release-drafter.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
- 

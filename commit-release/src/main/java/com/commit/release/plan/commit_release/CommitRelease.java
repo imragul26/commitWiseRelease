@@ -8,6 +8,6 @@ public class CompanyController {
 
     @GetMapping("/company")
     public String getDetails() {
-        return "Welcome to Acme Corporation ";
+        return "Welcome to Acme Corporation   ";
     }
 }

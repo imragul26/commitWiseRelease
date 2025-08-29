@@ -52,4 +52,4 @@ jobs:
 
             # Optionally create PR via GitHub CLI
             # gh pr create --title "Commit $commit" --body "Auto PR for commit $commit" --base main --head $branch_name --repo $GITHUB_REPOSITORY --draft
-          done
+          done 

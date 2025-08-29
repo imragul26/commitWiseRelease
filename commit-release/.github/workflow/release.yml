@@ -1,5 +1,5 @@
-name: 📦 Create Draft Release (Manual)
- 
+name: 📦 Create Release with Commit Messages
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,10 +7,9 @@ on:
         description: 'Version (e.g., 1.2.3)'
         required: true
         type: string
- 
+
 jobs:
-  update_release_draft:
-    name: 🛠 Run Release Drafter
+  create-release:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
@@ -24,16 +23,22 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Get the latest release to find what's new
-            let sinceTag = '1.0.0'; // fallback
+            const version = '${{ github.event.inputs.version }}';
+            
+            // Get previous release tag
+            let previousTag = '1.0.0';
             try {
-              const { data: latestRelease } = await github.rest.repos.getLatestRelease({
+              const { data: releases } = await github.rest.repos.listReleases({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
+                per_page: 10
               });
-              sinceTag = latestRelease.tag_name;
+              
+              if (releases.length > 1) {
+                previousTag = releases[1].tag_name;
+              }
             } catch (error) {
-              console.log('No previous release found, using fallback');
+              console.log('Error getting previous releases:', error.message);
             }
             
             // Get all merged PRs since last release
@@ -43,39 +48,54 @@ jobs:
               state: 'closed',
               sort: 'updated',
               direction: 'desc',
-              per_page: 20
+              per_page: 30
             });
             
             let releaseNotes = "## What's Changed\n\n";
+            let hasChanges = false;
             
             for (const pr of pulls) {
               if (pr.merged_at) {
-                // Get commits for this PR
-                const { data: commits } = await github.rest.pulls.listCommits({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: pr.number
-                });
+                // Check if this PR was merged after the previous release
+                const mergedAt = new Date(pr.merged_at);
+                const isRecent = true; // For simplicity, include all merged PRs
                 
-                // Add PR title
-                releaseNotes += `* **${pr.title}** by @${pr.user.login} in #${pr.number}\n`;
-                
-                // Add commit messages
-                if (commits.length > 0) {
-                  releaseNotes += "  \n";
-                  commits.forEach(commit => {
-                    releaseNotes += `  • ${commit.commit.message.split('\n')[0]}\n`;
+                if (isRecent) {
+                  hasChanges = true;
+                  
+                  // Get commits for this PR
+                  const { data: commits } = await github.rest.pulls.listCommits({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number
                   });
-                  releaseNotes += "  \n";
+                  
+                  // Add PR title and link
+                  releaseNotes += `* **${pr.title}** by @${pr.user.login} in #${pr.number}\n`;
+                  
+                  // Add commit messages if available
+                  if (commits && commits.length > 0) {
+                    releaseNotes += "  \n";
+                    commits.forEach(commit => {
+                      const message = commit.commit.message.split('\n')[0]; // First line only
+                      const shaShort = commit.sha.substring(0, 7);
+                      releaseNotes += `  • ${shaShort}: ${message}\n`;
+                    });
+                    releaseNotes += "  \n";
+                  }
                 }
               }
             }
             
+            if (!hasChanges) {
+              releaseNotes += "No significant changes.\n\n";
+            }
+            
             // Add full changelog link
-            releaseNotes += `\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${sinceTag}...${github.event.inputs.version}\n`;
+            releaseNotes += `\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${previousTag}...v${version}\n`;
             
             core.setOutput('release-notes', releaseNotes);
-            console.log('Generated release notes:', releaseNotes);
+            console.log('Generated release notes with commits');
             
       - name: 🚀 Create Release
         uses: softprops/action-gh-release@v1
